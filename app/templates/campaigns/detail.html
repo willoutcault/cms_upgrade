@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">{{ c.name }}</h2>
+  <a class="btn btn-outline-secondary" href="{{ url_for('campaigns.list_campaigns') }}">Back</a>
+</div>
+
+<form method="post" action="{{ url_for('campaigns.edit_campaign', cid=c.id) }}" class="row g-3 mb-4">
+  <div class="col-md-6">
+    <label class="form-label">Name</label>
+    <input class="form-control" name="name" value="{{ c.name }}" required>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">External ID</label>
+    <input class="form-control" name="external_id" value="{{ c.external_id or '' }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Business Unit</label>
+    <input class="form-control" name="business_unit" value="{{ c.business_unit or '' }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Status</label>
+    <select class="form-select" name="status">
+      {% for s in Status %}
+      <option value="{{ s.value }}" {% if c.status == s %}selected{% endif %}>{{ s.value|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Start Date</label>
+    <input type="date" class="form-control" name="start_date" value="{{ c.start_date }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">End Date</label>
+    <input type="date" class="form-control" name="end_date" value="{{ c.end_date }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Brand</label>
+    <select class="form-select" name="brand_id">
+      <option value="">(none)</option>
+      {% for b in brands %}
+      <option value="{{ b.id }}" {% if c.brand_id==b.id %}selected{% endif %}>{{ b.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12">
+    <label class="form-label">Objective</label>
+    <textarea class="form-control" name="objective" rows="2">{{ c.objective or "" }}</textarea>
+  </div>
+  <div class="col-12">
+    <label class="form-label">Notes</label>
+    <textarea class="form-control" name="notes" rows="2">{{ c.notes or "" }}</textarea>
+  </div>
+  <div class="col-12">
+    <button class="btn btn-primary">Save</button>
+  </div>
+</form>
+
+<h4 class="mb-2">Programs</h4>
+<table class="table table-sm table-striped">
+  <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Platform</th><th># Placements</th></tr></thead>
+  <tbody>
+  {% for p in c.programs %}
+    <tr>
+      <td>{{ p.program_id or "-" }}</td>
+      <td>{{ p.name }}</td>
+      <td>{{ p.type or "-" }}</td>
+      <td>{{ p.platform or "-" }}</td>
+      <td>{{ p.placements|length }}</td>
+    </tr>
+    {% if p.placements %}
+    <tr>
+      <td colspan="5">
+        <table class="table table-sm table-borderless ms-4">
+          <thead><tr><th>Placement ID</th><th>Name</th><th>Channel</th><th>Veeva Code</th><th>Ad Server ID</th></tr></thead>
+          <tbody>
+          {% for pl in p.placements %}
+            <tr>
+              <td>{{ pl.placement_id or "-" }}</td>
+              <td>{{ pl.name or "-" }}</td>
+              <td>{{ pl.channel.value if pl.channel else "-" }}</td>
+              <td>{{ pl.veeva_code or "-" }}</td>
+              <td>{{ pl.ad_server_id or "-" }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </td>
+    </tr>
+    {% endif %}
+  {% else %}
+    <tr><td colspan="5" class="text-muted">No programs yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<div class="row">
+  <div class="col-md-6">
+    <h5>Add Program</h5>
+    <form class="row g-2" method="post" action="{{ url_for('campaigns.create_program', cid=c.id) }}">
+      <div class="col-md-4"><input class="form-control" name="program_id" placeholder="Program ID (int)"></div>
+      <div class="col-md-8"><input class="form-control" name="name" placeholder="Program name" required></div>
+      <div class="col-md-6"><input class="form-control" name="type" placeholder="Type (e.g., Patient Consensus)"></div>
+      <div class="col-md-6"><input class="form-control" name="platform" placeholder="app / dx / cmd / web"></div>
+      <div class="col-12"><button class="btn btn-outline-primary">Add Program</button></div>
+    </form>
+  </div>
+  <div class="col-md-6">
+    <h5>Add Placement</h5>
+    <form class="row g-2" method="post" action="{{ url_for('campaigns.create_placement', pid=c.programs[0].id if c.programs else 0) }}" onsubmit="return ensureProgramSelected()">
+      <div class="col-12">
+        <select class="form-select" id="placementProgram" name="program_id_select">
+          {% for p in c.programs %}
+          <option value="{{ p.id }}">{{ p.name }} ({{ p.program_id or "-" }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4"><input class="form-control" name="placement_id" placeholder="Placement ID (int)"></div>
+      <div class="col-md-8"><input class="form-control" name="name" placeholder="Placement name"></div>
+      <div class="col-md-4">
+        <select class="form-select" name="channel">
+          <option value="">Channel</option>
+          <option>email</option><option>app</option><option>dx</option><option>cmd</option><option>web</option>
+        </select>
+      </div>
+      <div class="col-md-4"><input class="form-control" name="veeva_code" placeholder="Veeva code"></div>
+      <div class="col-md-4"><input class="form-control" name="ad_server_id" placeholder="Ad server ID"></div>
+      <div class="col-12"><button class="btn btn-outline-primary">Add Placement</button></div>
+    </form>
+  </div>
+</div>
+
+<script>
+// Patch the form action to target the selected program id
+function ensureProgramSelected() {
+  const sel = document.getElementById('placementProgram');
+  if (!sel || !sel.value) { alert('Select a program'); return false; }
+  const form = sel.closest('form');
+  form.action = form.action.replace(/\/programs\/(\d+)\/placements\/new/, `/programs/${sel.value}/placements/new`);
+  return true;
+}
+</script>
+
+{% endblock %}

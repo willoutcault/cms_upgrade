@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">Network NPIs ({{ strategy|capitalize }})</h2>
+  <div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('targets.target_lists') }}">Back to Target Lists</a>
+    {% if strategy != 'live' %}
+    <form method="post" action="{{ url_for('targets.network_refresh') }}" class="d-inline">
+      <button class="btn btn-primary">Refresh Cache</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <h5 class="card-title">Configuration</h5>
+    <ul class="mb-0">
+      <li>NETWORK_DATABASE_URL present: <strong>{{ "Yes" if env_url_present else "No" }}</strong></li>
+      <li>NETWORK_NPI_SQL present: <strong>{{ "Yes" if env_sql_present else "No" }}</strong></li>
+      {% if sql_preview %}
+      <li>SQL (preview): <code>{{ sql_preview }}{% if sql_preview|length == 120 %}...{% endif %}</code></li>
+      {% endif %}
+      {% if strategy != 'live' %}
+      <li>Cache count: <strong>{{ cache_count or 0 }}</strong></li>
+      <li>Last refresh (UTC): <strong>{{ cache_last if cache_last else "—" }}</strong></li>
+      {% endif %}
+    </ul>
+  </div>
+</div>
+
+{% if test_error %}
+  <div class="alert alert-danger"><strong>Error:</strong> {{ test_error }}</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Overview</h5>
+    <ul class="mb-0">
+      <li>Total NPIs available: <strong>{{ n_network if n_network is not none else "—" }}</strong></li>
+    </ul>
+  </div>
+</div>
+
+<p class="text-muted mt-3">
+  Matching uses either your warehouse SQL (live) or the local cache (startup/manual). The SQL must return a single column named <code>npi</code>.
+</p>
+{% endblock %}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">Target Lists</h2>
+  <a class="btn btn-outline-secondary" href="{{ url_for('targets.network_upload') }}">Network NPIs</a>
+</div>
+
+<form class="row g-2 mb-4" method="post" enctype="multipart/form-data">
+  <div class="col-md-3">
+    <input class="form-control" name="name" placeholder="Target list name" />
+    <div class="form-text">If blank, uses Alias or "Unnamed List".</div>
+  </div>
+  <div class="col-md-3">
+    <input class="form-control" name="alias" placeholder="Alias (e.g., Client Short Name)" />
+  </div>
+  <div class="col-md-2">
+    <input class="form-control" name="brand" placeholder="Brand (optional)" />
+  </div>
+  <div class="col-md-2">
+    <input class="form-control" name="pharma" placeholder="Pharma (optional)" />
+  </div>
+  <div class="col-md-2">
+    <input class="form-control" name="indication" placeholder="Indication (optional)" />
+  </div>
+  <div class="col-12">
+    <textarea class="form-control" name="notes" rows="2" placeholder="Notes (optional)"></textarea>
+  </div>
+  <div class="col-md-8">
+    <input class="form-control" type="file" name="file" accept=".csv,.xlsx,.xls" required>
+  </div>
+  <div class="col-md-2">
+    <button class="btn btn-primary w-100">Upload</button>
+  </div>
+</form>
+
+<table class="table table-sm table-hover align-middle">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Alias</th>
+      <th>Brand</th>
+      <th>Pharma</th>
+      <th>Indication</th>
+      <th>Rows</th>
+      <th>Unique NPI</th>
+      <th>Matched</th>
+      <th>Uploaded</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in lists %}
+    <tr>
+      <td><a href="{{ url_for('targets.target_list_detail', tid=t.id) }}">{{ t.name }}</a></td>
+      <td>{{ t.alias or "—" }}</td>
+      <td>{{ t.brand or "—" }}</td>
+      <td>{{ t.pharma or "—" }}</td>
+      <td>{{ t.indication or "—" }}</td>
+      <td>{{ t.n_rows }}</td>
+      <td>{{ t.n_unique_npi }}</td>
+      <td>{{ t.n_matched_network }}</td>
+      <td>{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="text-muted">No target lists uploaded yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

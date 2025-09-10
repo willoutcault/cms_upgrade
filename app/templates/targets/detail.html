@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">{{ t.name }}</h2>
+  <a class="btn btn-outline-secondary" href="{{ url_for('targets.target_lists') }}">Back</a>
+</div>
+
+<div class="row g-3">
+  <!-- Left: Summary & Meta -->
+  <div class="col-lg-5">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Summary</h5>
+        <ul class="mb-0">
+          <li>Alias: <strong>{{ t.alias or "—" }}</strong></li>
+          <li>Brand: <strong>{{ t.brand or "—" }}</strong></li>
+          <li>Pharma: <strong>{{ t.pharma or "—" }}</strong></li>
+          <li>Indication: <strong>{{ t.indication or "—" }}</strong></li>
+          <li>File: <strong>{{ t.filename or "—" }}</strong></li>
+          <li>Total rows: <strong>{{ t.n_rows }}</strong></li>
+          <li>Unique NPI: <strong>{{ t.n_unique_npi }}</strong></li>
+          <li>Matched in network: <strong>{{ t.n_matched_network }}</strong> (coverage {{ (100*t.n_matched_network / t.n_unique_npi)|round(1) if t.n_unique_npi else 0 }}%)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Edit Details</h5>
+        <form method="post">
+          <input type="hidden" name="action" value="meta" />
+          <div class="row g-2">
+            <div class="col-md-6"><input class="form-control" name="name" value="{{ t.name or '' }}" placeholder="Name"></div>
+            <div class="col-md-6"><input class="form-control" name="alias" value="{{ t.alias or '' }}" placeholder="Alias"></div>
+            <div class="col-md-6"><input class="form-control" name="brand" value="{{ t.brand or '' }}" placeholder="Brand"></div>
+            <div class="col-md-6"><input class="form-control" name="pharma" value="{{ t.pharma or '' }}" placeholder="Pharma"></div>
+            <div class="col-md-12"><input class="form-control" name="indication" value="{{ t.indication or '' }}" placeholder="Indication"></div>
+            <div class="col-12"><textarea class="form-control" name="notes" rows="3" placeholder="Notes">{{ t.notes or '' }}</textarea></div>
+          </div>
+          <button class="btn btn-primary mt-2">Save</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Mapping & Data Summary -->
+  <div class="col-lg-7">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Map to Programs</h5>
+        <form method="post">
+          <input type="hidden" name="action" value="map" />
+          <div class="row g-2 align-items-end">
+            <div class="col-md-9">
+              <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Filter programs by Program Name/ID, Campaign, Brand, Platform, Type" formmethod="get">
+              <div class="form-text">Server-side filter; press Enter.</div>
+            </div>
+            <div class="col-md-3">
+              <button class="btn btn-outline-secondary w-100" formmethod="get">Search</button>
+            </div>
+          </div>
+          <div class="mt-2" style="max-height: 360px; overflow:auto; border:1px solid #eee; border-radius: 6px; padding: 6px;">
+            <div class="row">
+              {% for p in programs %}
+              <div class="col-12 col-md-6">
+                <label class="form-check form-check-inline w-100">
+                  <input class="form-check-input" type="checkbox" name="program_ids" value="{{ p.id }}" {% if p in t.programs %}checked{% endif %}>
+                  <span class="form-check-label">
+                    <strong>{{ p.name }}</strong>
+                    <small class="text-muted">#{{ p.program_id or "—" }} · {{ p.platform or "—" }} · {{ p.type or "—" }}</small>
+                  </span>
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          <button class="btn btn-primary mt-2">Save Mappings</button>
+          <div class="form-text">Showing {{ programs|length }} program(s). Use the search to narrow down.</div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Data Summary</h5>
+
+        {% if facets %}
+          <div class="row">
+            {% for key, items in facets.items() %}
+              <div class="col-md-6">
+                <h6 class="text-muted">{{ key }}</h6>
+                <ul class="mb-3">
+                  {% for val, cnt in items %}
+                    <li>{{ val }} — <strong>{{ cnt }}</strong></li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="text-muted">No categorical fields found to summarize.</div>
+        {% endif %}
+
+        {% if numerics %}
+          <hr/>
+          <div class="row">
+            {% for key, stats in numerics.items() %}
+              <div class="col-md-6">
+                <h6 class="text-muted">{{ key }}</h6>
+                <ul class="mb-0">
+                  <li>Count: {{ stats.count }}</li>
+                  <li>Min / P50 / P90 / Max: {{ stats.min }} / {{ stats.p50 }} / {{ stats.p90 }} / {{ stats.max }}</li>
+                </ul>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <hr/>
+        <h6 class="text-muted">Sample Rows</h6>
+        {% if sample %}
+          <div style="max-height: 240px; overflow:auto;">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>NPI</th>
+                  <th>Extra</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for npi, extra in sample %}
+                  <tr>
+                    <td><code>{{ npi }}</code></td>
+                    <td><small>{{ extra }}</small></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">No sample available.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

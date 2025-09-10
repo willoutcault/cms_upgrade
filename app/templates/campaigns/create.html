@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>New Campaign</h2>
+<form method="post" class="row g-3">
+  <div class="col-md-6">
+    <label class="form-label">Name</label>
+    <input class="form-control" name="name" required>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">External ID</label>
+    <input class="form-control" name="external_id" placeholder="e.g., AC-12345">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Business Unit</label>
+    <input class="form-control" name="business_unit" placeholder="HCM / MDIQ">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Status</label>
+    <select class="form-select" name="status">
+      {% for s in Status %}
+      <option value="{{ s.value }}">{{ s.value|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Start Date</label>
+    <input type="date" class="form-control" name="start_date">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">End Date</label>
+    <input type="date" class="form-control" name="end_date">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Brand</label>
+    <select class="form-select" name="brand_id">
+      <option value="">(none)</option>
+      {% for b in brands %}
+      <option value="{{ b.id }}">{{ b.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12">
+    <label class="form-label">Objective</label>
+    <textarea class="form-control" name="objective" rows="2"></textarea>
+  </div>
+  <div class="col-12">
+    <label class="form-label">Notes</label>
+    <textarea class="form-control" name="notes" rows="2"></textarea>
+  </div>
+  <div class="col-12">
+    <button class="btn btn-primary">Create</button>
+    <a class="btn btn-link" href="{{ url_for('campaigns.list_campaigns') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}
