@@ -1,8 +1,13 @@
-import io, os, csv, datetime, math
+from __future__ import annotations
+
+import io, os, csv
 from collections import Counter, defaultdict
+from typing import Optional
+
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from sqlalchemy import select, text, or_
-from ..extensions import db, refresh_network_cache
+
+from ..extensions import db
 from .. import extensions as ext
 from ..models import TargetList, TargetListEntry, Program, Campaign, Brand
 
@@ -31,7 +36,7 @@ def _read_xlsx_dicts(file_bytes: bytes):
         return []
     headers = [str(h).strip() if h is not None else "" for h in rows[0]]
     out = []
-    for r in rows[1:] if len(rows) > 1 else []:
+    for r in rows[1:]:
         rec = {}
         for i, v in enumerate(r):
             key = headers[i] if i < len(headers) else f"col{i+1}"
@@ -68,21 +73,17 @@ def _pick_npi_column(rows):
 def _extract_clean_npi(raw: str):
     return "".join(ch for ch in str(raw or "").strip() if ch.isdigit())
 
-def _extract_clean_npis(rows, npi_col):
-    return [_extract_clean_npi(row.get(npi_col)) for row in rows if _extract_clean_npi(row.get(npi_col))]
-
 # -----------------------------
 # Program search helper
 # -----------------------------
-def _query_programs(q: str | None):
+def _query_programs(q: Optional[str]):
     stmt = select(Program).order_by(Program.created_at.desc())
     if q:
         like = f"%{q}%"
-        # search across program fields + campaign + brand
         stmt = (
             select(Program)
-            .join(Campaign, Program.campaign_id == Campaign.id)
-            .join(Brand, isouter=True, onclause=Campaign.brand_id == Brand.id)
+            .join(Campaign, Program.campaign_id == Campaign.id, isouter=True)
+            .join(Brand, Campaign.brand_id == Brand.id, isouter=True)
             .where(
                 or_(
                     Program.name.ilike(like),
@@ -90,7 +91,6 @@ def _query_programs(q: str | None):
                     Program.type.ilike(like),
                     Campaign.name.ilike(like),
                     Brand.name.ilike(like),
-                    Program.program_id.cast(db.Integer).cast(db.String).ilike(like) if Program.program_id is not None else Program.name.ilike(like),
                 )
             )
             .order_by(Program.created_at.desc())
@@ -100,13 +100,7 @@ def _query_programs(q: str | None):
 # -----------------------------
 # Data summary (from JSON extras)
 # -----------------------------
-SUMMARY_CANDIDATES = [
-    ("Specialty", 8),
-    ("State", 8),
-    ("City", 8),
-    ("Tier", 5),
-    ("Client", 5),
-]
+SUMMARY_CANDIDATES = [("Specialty", 8), ("State", 8), ("City", 8), ("Tier", 5), ("Client", 5)]
 NUMERIC_CANDIDATES = ["ActivityScore", "Score", "Rank"]
 
 def _summarize_entries(tid: int, limit_rows: int = 20000):
@@ -116,7 +110,7 @@ def _summarize_entries(tid: int, limit_rows: int = 20000):
     facet_counts = {k: Counter() for k, _ in SUMMARY_CANDIDATES}
     numeric_values = defaultdict(list)
 
-    for extra, npi in rows:
+    for extra, _npi in rows:
         if not extra or not isinstance(extra, dict):
             continue
         for key, topn in SUMMARY_CANDIDATES:
@@ -139,18 +133,11 @@ def _summarize_entries(tid: int, limit_rows: int = 20000):
         if vals:
             vals_sorted = sorted(vals)
             n = len(vals_sorted)
-            def pct(p): 
+            def pct(p):
                 i = max(0, min(n-1, int(round((p/100.0)*(n-1)))))
                 return vals_sorted[i]
-            numerics[nk] = {
-                "count": n,
-                "min": vals_sorted[0],
-                "p50": pct(50),
-                "p90": pct(90),
-                "max": vals_sorted[-1],
-            }
+            numerics[nk] = {"count": n, "min": vals_sorted[0], "p50": pct(50), "p90": pct(90), "max": vals_sorted[-1]}
 
-    # sample up to 25 entries for preview table
     sample = db.session.execute(
         select(TargetListEntry.npi, TargetListEntry.extra).where(TargetListEntry.target_list_id == tid).limit(25)
     ).all()
@@ -158,13 +145,77 @@ def _summarize_entries(tid: int, limit_rows: int = 20000):
     return facets, numerics, sample
 
 # -----------------------------
+# Matching: cache or live (safe)
+# -----------------------------
+def _env_true(name: str, default: str = "1") -> bool:
+    v = os.getenv(name, default)
+    return str(v).lower() in {"1", "true", "yes", "y", "on"}
+
+def compute_network_match_count(target_list_id: int) -> int:
+    """Compute network overlap for a target list.
+    - Prefers local cache when strategy is 'manual' or 'startup_snapshot'.
+    - For live, uses sqlalchemy.text() with named binds (psycopg-safe).
+    - Never raises: returns 0 on error and flashes a warning.
+    """
+    if not _env_true("MATCH_NETWORK_ENABLED", "1"):
+        return 0
+    try:
+        strategy = getattr(ext, "network_cache_strategy", "live")
+        use_cache = strategy in {"startup_snapshot", "manual"}
+
+        if use_cache:
+            if hasattr(ext, "ensure_local_network_table"):
+                ext.ensure_local_network_table()
+            res = db.session.execute(text("""
+                SELECT COUNT(*) FROM (
+                  SELECT npi FROM network_npis
+                  WHERE npi IN (SELECT e.npi FROM target_list_entries e WHERE e.target_list_id = :tid)
+                ) sub
+            """), {"tid": target_list_id}).scalar_one()
+            return int(res or 0)
+
+        # live
+        if getattr(ext, "ro_engine", None) and getattr(ext, "ro_sql_network_npi", None):
+            sql = (
+                """
+                SELECT COUNT(*) FROM (
+                    SELECT DISTINCT net.npi
+                    FROM ("""
+                + ext.ro_sql_network_npi
+                + """) AS net
+                    WHERE net.npi IN (
+                        SELECT e.npi FROM target_list_entries e WHERE e.target_list_id = :tid
+                    )
+                ) AS sub
+                """
+            )
+            stmt = text(sql)
+            with ext.ro_engine.connect() as conn:
+                try:
+                    conn.exec_driver_sql("SET TRANSACTION READ ONLY;")
+                except Exception:
+                    pass
+                res = conn.execute(stmt, {"tid": target_list_id}).scalar()
+                return int(res or 0)
+
+        # not configured
+        return 0
+    except Exception as e:
+        try:
+            flash(f"Network match skipped: {type(e).__name__}: {e}", "warning")
+        except Exception:
+            pass
+        return 0
+
+# -----------------------------
 # Routes
 # -----------------------------
 @targets_bp.route("/target-lists", methods=["GET", "POST"])
 def target_lists():
-    # Ensure new columns exist on SQLite (MVP migration)
+    # Ensure optional columns exist on SQLite (no-op on Postgres)
     try:
-        ext.ensure_mvp_schema_sqlite()
+        if hasattr(ext, "ensure_mvp_schema_sqlite"):
+            ext.ensure_mvp_schema_sqlite()
     except Exception:
         pass
 
@@ -178,9 +229,10 @@ def target_lists():
 
         f = request.files.get("file")
         if not f or f.filename == "":
-            flash("Upload a CSV/XLSX with NPI column.", "warning")
+            flash("Upload a CSV/XLSX with an NPI column.", "warning")
             return redirect(url_for("targets.target_lists"))
         try:
+            # Read & identify NPI column
             rows = _read_rows(f)
             if not rows:
                 raise RuntimeError("File appears empty.")
@@ -188,60 +240,35 @@ def target_lists():
             if not npi_col:
                 raise RuntimeError("Could not identify NPI column.")
 
-            filename = f.filename or None
-            t = TargetList(name=name, alias=alias, brand=brand, pharma=pharma, indication=indication, notes=notes, filename=filename)
+            # Create TargetList
+            t = TargetList(
+                name=name, alias=alias, brand=brand, pharma=pharma,
+                indication=indication, notes=notes, filename=(f.filename or None)
+            )
             db.session.add(t); db.session.flush()
 
-            # Build NPI -> extra mapping (first occurrence wins)
-            npi_to_extra = {}
+            # Build unique NPIs + compact 'extra' JSON
+            seen = set()
+            to_insert = []
             for r in rows:
                 npi = _extract_clean_npi(r.get(npi_col))
-                if not npi or npi in npi_to_extra:
+                if not npi or npi in seen:
                     continue
+                seen.add(npi)
                 extra = {k: v for k, v in r.items() if k != npi_col}
-                # cap extra size to avoid huge payload per entry
                 if len(extra) > 30:
-                    # keep only first 30 keys deterministically
-                    keep_keys = list(extra.keys())[:30]
-                    extra = {k: extra[k] for k in keep_keys}
-                npi_to_extra[npi] = extra
+                    keys = list(extra.keys())[:30]
+                    extra = {k: extra[k] for k in keys}
+                to_insert.append(TargetListEntry(target_list_id=t.id, npi=npi, extra=extra if extra else None))
 
-            unique_npis = list(npi_to_extra.keys())
+            db.session.bulk_save_objects(to_insert)
 
-            entries = [TargetListEntry(target_list_id=t.id, npi=n, extra=npi_to_extra.get(n)) for n in unique_npis]
-            db.session.bulk_save_objects(entries)
-
+            # Basic stats
             t.n_rows = int(len(rows))
-            t.n_unique_npi = int(len(unique_npis))
-            # coverage via live or cache based on strategy
-            if (ext.network_cache_strategy or "live") in {"startup_snapshot", "manual"}:
-                # cache path: ensure table exists, match locally
-                ext.ensure_local_network_table()
-                res = db.session.execute(text("""
-                    SELECT COUNT(*) FROM (
-                      SELECT npi FROM network_npis
-                      WHERE npi IN (SELECT e.npi FROM target_list_entries e WHERE e.target_list_id = :tid)
-                    ) sub
-                """), {"tid": t.id}).scalar_one()
-                t.n_matched_network = int(res or 0)
-            else:
-                # live path
-                sql = f"""
-                SELECT COUNT(*) FROM (
-                    SELECT DISTINCT net.npi
-                    FROM ({ext.ro_sql_network_npi}) AS net
-                    WHERE net.npi IN (
-                        SELECT e.npi FROM target_list_entries e WHERE e.target_list_id = :tid
-                    )
-                ) AS sub
-                """
-                with ext.ro_engine.connect() as conn:
-                    try:
-                        conn.exec_driver_sql("SET TRANSACTION READ ONLY;")
-                    except Exception:
-                        pass
-                    res = conn.exec_driver_sql(sql, {"tid": t.id}).scalar()
-                    t.n_matched_network = int(res or 0)
+            t.n_unique_npi = int(len(seen))
+
+            # Coverage (cache or live; safe)
+            t.n_matched_network = compute_network_match_count(t.id)
 
             db.session.commit()
             flash("Target list stored.", "success")
@@ -255,10 +282,10 @@ def target_lists():
     return render_template("targets/list.html", lists=lists)
 
 @targets_bp.route("/target-lists/<int:tid>", methods=["GET", "POST"])
-def target_list_detail(tid):
-    # Ensure new columns exist on SQLite (MVP migration)
+def target_list_detail(tid: int):
     try:
-        ext.ensure_mvp_schema_sqlite()
+        if hasattr(ext, "ensure_mvp_schema_sqlite"):
+            ext.ensure_mvp_schema_sqlite()
     except Exception:
         pass
 
@@ -281,43 +308,20 @@ def target_list_detail(tid):
             return redirect(url_for("targets.target_list_detail", tid=tid))
         elif action == "map":
             program_ids = request.form.getlist("program_ids")
-            programs = db.session.execute(select(Program).where(Program.id.in_([int(x) for x in program_ids]))).scalars().all() if program_ids else []
+            programs = db.session.execute(
+                select(Program).where(Program.id.in_([int(x) for x in program_ids])) if program_ids else select(Program).where(False)
+            ).scalars().all()
             t.programs = programs
             db.session.commit()
             flash("Mappings updated.", "success")
             return redirect(url_for("targets.target_list_detail", tid=tid))
 
-    # Program search/filter
     q = request.args.get("q", "").strip()
     programs = _query_programs(q)
 
-    # Recompute match using current strategy
-    if (ext.network_cache_strategy or "live") in {"startup_snapshot", "manual"}:
-        ext.ensure_local_network_table()
-        matched = db.session.execute(text("""
-            SELECT COUNT(*) FROM network_npis n
-            WHERE n.npi IN (SELECT e.npi FROM target_list_entries e WHERE e.target_list_id = :tid)
-        """), {"tid": t.id}).scalar_one()
-    else:
-        sql = f"""
-        SELECT COUNT(*) FROM (
-            SELECT DISTINCT net.npi
-            FROM ({ext.ro_sql_network_npi}) AS net
-            WHERE net.npi IN (
-                SELECT e.npi FROM target_list_entries e WHERE e.target_list_id = :tid
-            )
-        ) AS sub
-        """
-        with ext.ro_engine.connect() as conn:
-            try:
-                conn.exec_driver_sql("SET TRANSACTION READ ONLY;")
-            except Exception:
-                pass
-            matched = conn.exec_driver_sql(sql, {"tid": t.id}).scalar()
-    t.n_matched_network = int(matched or 0)
+    t.n_matched_network = compute_network_match_count(t.id)
     db.session.commit()
 
-    # Data summary
     facets, numerics, sample = _summarize_entries(t.id)
 
     return render_template("targets/detail.html", t=t, programs=programs, q=q, facets=facets, numerics=numerics, sample=sample)
