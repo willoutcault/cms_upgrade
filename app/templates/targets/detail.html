@@ -12,7 +12,6 @@
       <div class="card-body">
         <h5 class="card-title">Summary</h5>
         <ul class="mb-0">
-          <li>Alias: <strong>{{ t.alias or "—" }}</strong></li>
           <li>Brand: <strong>{{ t.brand or "—" }}</strong></li>
           <li>Pharma: <strong>{{ t.pharma or "—" }}</strong></li>
           <li>Indication: <strong>{{ t.indication or "—" }}</strong></li>
@@ -31,7 +30,6 @@
           <input type="hidden" name="action" value="meta" />
           <div class="row g-2">
             <div class="col-md-6"><input class="form-control" name="name" value="{{ t.name or '' }}" placeholder="Name"></div>
-            <div class="col-md-6"><input class="form-control" name="alias" value="{{ t.alias or '' }}" placeholder="Alias"></div>
             <div class="col-md-6"><input class="form-control" name="brand" value="{{ t.brand or '' }}" placeholder="Brand"></div>
             <div class="col-md-6"><input class="form-control" name="pharma" value="{{ t.pharma or '' }}" placeholder="Pharma"></div>
             <div class="col-md-12"><input class="form-control" name="indication" value="{{ t.indication or '' }}" placeholder="Indication"></div>

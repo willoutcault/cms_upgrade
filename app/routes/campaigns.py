@@ -48,7 +48,6 @@ def create_campaign():
         start_date = _parse_date(request.form.get("start_date"))
         end_date = _parse_date(request.form.get("end_date"))
         brand_id = request.form.get("brand_id") or None
-        objective = request.form.get("objective") or None
         notes = request.form.get("notes") or None
 
         c = Campaign(
@@ -59,7 +58,6 @@ def create_campaign():
             start_date=start_date,
             end_date=end_date,
             brand_id=int(brand_id) if brand_id else None,
-            objective=objective,
             notes=notes,
         )
         db.session.add(c)
@@ -92,7 +90,6 @@ def edit_campaign(cid):
     c.start_date = _parse_date(request.form.get("start_date"))
     c.end_date = _parse_date(request.form.get("end_date"))
     c.brand_id = int(request.form["brand_id"]) if request.form.get("brand_id") else None
-    c.objective = request.form.get("objective") or None
     c.notes = request.form.get("notes") or None
     db.session.commit()
     flash("Campaign updated.", "success")

@@ -147,7 +147,6 @@ def ensure_mvp_schema_sqlite() -> None:
     """Best-effort SQLite-only migration to add new optional columns for TargetList.
 
     Adds columns if missing:
-      - alias TEXT
       - brand TEXT
       - pharma TEXT
       - indication TEXT
@@ -164,8 +163,6 @@ def ensure_mvp_schema_sqlite() -> None:
         rows = conn.exec_driver_sql("PRAGMA table_info('target_lists')").fetchall()
         cols = {r[1] for r in rows}
         stmts = []
-        if "alias" not in cols:
-            stmts.append("ALTER TABLE target_lists ADD COLUMN alias TEXT")
         if "brand" not in cols:
             stmts.append("ALTER TABLE target_lists ADD COLUMN brand TEXT")
         if "pharma" not in cols:
