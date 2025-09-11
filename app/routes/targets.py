@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io, os, csv
 from collections import Counter, defaultdict
-from typing import Optional
+from typing import Optional, Iterable
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from sqlalchemy import select, text, or_
@@ -100,7 +100,7 @@ def _query_programs(q: Optional[str]):
 # -----------------------------
 # Data summary (from JSON extras)
 # -----------------------------
-SUMMARY_CANDIDATES = [("Specialty", 8), ("State", 8), ("City", 8), ("Tier", 5), ("Client", 5)]
+SUMMARY_CANDIDATES = [("Specialty", 8), ("Segment", 8), ("Tier", 5)]
 NUMERIC_CANDIDATES = ["ActivityScore", "Score", "Rank"]
 
 def _summarize_entries(tid: int, limit_rows: int = 20000):
@@ -134,7 +134,7 @@ def _summarize_entries(tid: int, limit_rows: int = 20000):
             vals_sorted = sorted(vals)
             n = len(vals_sorted)
             def pct(p):
-                i = max(0, min(n-1, int(round((p/100.0)*(n-1)))))
+                i = max(0, min(n-1, int(round((p/100.0)*(n-1)))) )
                 return vals_sorted[i]
             numerics[nk] = {"count": n, "min": vals_sorted[0], "p50": pct(50), "p90": pct(90), "max": vals_sorted[-1]}
 
@@ -145,16 +145,46 @@ def _summarize_entries(tid: int, limit_rows: int = 20000):
     return facets, numerics, sample
 
 # -----------------------------
-# Matching: cache or live (safe)
+# Matching helpers (PG read-only + Python set intersection)
 # -----------------------------
+
 def _env_true(name: str, default: str = "1") -> bool:
     v = os.getenv(name, default)
     return str(v).lower() in {"1", "true", "yes", "y", "on"}
 
+def _stream_network_npis_from_pg() -> Iterable[str]:
+    """
+    Stream DISTINCT NPIs from Postgres using a read-only SQLAlchemy engine and
+    the SQL snippet provided by ext.ro_sql_network_npi. This function only READS
+    from Postgres; it does not create temp tables or write anything to PG.
+    """
+    if not getattr(ext, "ro_engine", None) or not getattr(ext, "ro_sql_network_npi", None):
+        return iter(())  # nothing configured
+    # Ensure the inner SQL selects a column named "npi"
+    outer_sql = "SELECT DISTINCT net.npi FROM (" + ext.ro_sql_network_npi + ") AS net"
+    def _gen():
+        with ext.ro_engine.connect() as conn:
+            try:
+                conn.exec_driver_sql("SET TRANSACTION READ ONLY;")
+            except Exception:
+                pass
+            result = conn.exec_driver_sql(outer_sql)
+            # fetch in chunks to keep memory low
+            while True:
+                rows = result.fetchmany(50000)
+                if not rows:
+                    break
+                for (npi,) in rows:
+                    # Cast to str and strip just in case
+                    yield str(npi).strip()
+    return _gen()
+
 def compute_network_match_count(target_list_id: int) -> int:
-    """Compute network overlap for a target list.
-    - Prefers local cache when strategy is 'manual' or 'startup_snapshot'.
-    - For live, uses sqlalchemy.text() with named binds (psycopg-safe).
+    """
+    Compute network overlap for a target list.
+
+    - If cache strategy is 'startup_snapshot' or 'manual', uses local SQLite table `network_npis`.
+    - Otherwise, streams NPIs from Postgres (read-only) and intersects with the SQLite target list NPIs in Python.
     - Never raises: returns 0 on error and flashes a warning.
     """
     if not _env_true("MATCH_NETWORK_ENABLED", "1"):
@@ -174,32 +204,24 @@ def compute_network_match_count(target_list_id: int) -> int:
             """), {"tid": target_list_id}).scalar_one()
             return int(res or 0)
 
-        # live
-        if getattr(ext, "ro_engine", None) and getattr(ext, "ro_sql_network_npi", None):
-            sql = (
-                """
-                SELECT COUNT(*) FROM (
-                    SELECT DISTINCT net.npi
-                    FROM ("""
-                + ext.ro_sql_network_npi
-                + """) AS net
-                    WHERE net.npi IN (
-                        SELECT e.npi FROM target_list_entries e WHERE e.target_list_id = :tid
-                    )
-                ) AS sub
-                """
-            )
-            stmt = text(sql)
-            with ext.ro_engine.connect() as conn:
-                try:
-                    conn.exec_driver_sql("SET TRANSACTION READ ONLY;")
-                except Exception:
-                    pass
-                res = conn.execute(stmt, {"tid": target_list_id}).scalar()
-                return int(res or 0)
+        # ---- LIVE MATCH (read Postgres, compare in Python) ----
+        # 1) pull target list NPIs from SQLite
+        tl_npis = set(
+            db.session.execute(
+                select(TargetListEntry.npi).where(TargetListEntry.target_list_id == target_list_id)
+            ).scalars()
+        )
+        if not tl_npis:
+            return 0
 
-        # not configured
-        return 0
+        # 2) stream Postgres network NPIs and intersect
+        matched = 0
+        for net_npi in _stream_network_npis_from_pg():
+            if net_npi in tl_npis:
+                matched += 1
+
+        return matched
+
     except Exception as e:
         try:
             flash(f"Network match skipped: {type(e).__name__}: {e}", "warning")
@@ -266,7 +288,7 @@ def target_lists():
             t.n_rows = int(len(rows))
             t.n_unique_npi = int(len(seen))
 
-            # Coverage (cache or live; safe)
+            # Coverage (cache or live; safe; now Python-side match for live)
             t.n_matched_network = compute_network_match_count(t.id)
 
             db.session.commit()
@@ -317,6 +339,7 @@ def target_list_detail(tid: int):
     q = request.args.get("q", "").strip()
     programs = _query_programs(q)
 
+    # Refresh coverage using the new Python-side match
     t.n_matched_network = compute_network_match_count(t.id)
     db.session.commit()
 
