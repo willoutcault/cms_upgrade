@@ -220,8 +220,7 @@ def target_lists():
         pass
 
     if request.method == "POST":
-        alias = request.form.get("alias") or None
-        name = request.form.get("name", "").strip() or (alias or "Unnamed List")
+        name = request.form.get("name", "").strip() or "Unnamed List"
         brand = request.form.get("brand") or None
         pharma = request.form.get("pharma") or None
         indication = request.form.get("indication") or None
@@ -242,7 +241,7 @@ def target_lists():
 
             # Create TargetList
             t = TargetList(
-                name=name, alias=alias, brand=brand, pharma=pharma,
+                name=name, brand=brand, pharma=pharma,
                 indication=indication, notes=notes, filename=(f.filename or None)
             )
             db.session.add(t); db.session.flush()
@@ -297,8 +296,7 @@ def target_list_detail(tid: int):
     if request.method == "POST":
         action = request.form.get("action")
         if action == "meta":
-            t.alias = request.form.get("alias") or None
-            t.name = request.form.get("name") or t.alias or t.name
+            t.name = request.form.get("name") or t.name
             t.brand = request.form.get("brand") or None
             t.pharma = request.form.get("pharma") or None
             t.indication = request.form.get("indication") or None
