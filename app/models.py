@@ -127,7 +127,9 @@ class TargetList(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    brand: Mapped[str] = mapped_column(String(255), nullable=False)
     pharma: Mapped[str] = mapped_column(String(255), nullable=False)
+    indication: Mapped[str] = mapped_column(String(255), nullable=False)
     filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     n_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     n_unique_npi: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
